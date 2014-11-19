@@ -703,7 +703,7 @@ snd_device_t platform_get_output_snd_device(void *platform, audio_devices_t devi
         audio_extn_set_afe_proxy_channel_mixer(adev, channel_count);
     }
 
-    if (mode == AUDIO_MODE_IN_CALL) {
+    if (mode == AUDIO_MODE_IN_CALL || mode==AUDIO_MODE_IN_COMMUNICATION) {
         if (devices & AUDIO_DEVICE_OUT_WIRED_HEADPHONE ||
             devices & AUDIO_DEVICE_OUT_WIRED_HEADSET) {
             if (adev->voice.tty_mode == TTY_MODE_FULL)

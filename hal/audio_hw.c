@@ -889,6 +889,7 @@ int select_devices(struct audio_device *adev, audio_usecase_t uc_id)
 #endif
 
 
+#ifndef PLATFORM_MSM8960
     /* Applicable only on the targets that has external modem.
      * Enable device command should be sent to modem only after
      * enabling voice call mixer controls
@@ -897,6 +898,7 @@ int select_devices(struct audio_device *adev, audio_usecase_t uc_id)
         status = platform_switch_voice_call_usecase_route_post(adev->platform,
                                                                out_snd_device,
                                                                in_snd_device);
+#endif
 
     ALOGD("%s: done",__func__);
 
@@ -920,8 +922,10 @@ static int stop_input_stream(struct stream_in *in)
         return -EINVAL;
     }
 
+#ifdef MULTI_VOICE_SESSION_ENABLED
     /* Close in-call recording streams */
     voice_check_and_stop_incall_rec_usecase(adev, in);
+#endif
 
     /* 1. Disable stream specific mixer controls */
     disable_audio_route(adev, uc_info);
@@ -954,12 +958,14 @@ int start_input_stream(struct stream_in *in)
         goto error_config;
     }
 
+#ifdef MULTI_VOICE_SESSION_ENABLED
     /* Check if source matches incall recording usecase criteria */
     ret = voice_check_and_set_incall_rec_usecase(adev, in);
     if (ret)
         goto error_config;
     else
         ALOGV("%s: usecase(%d)", __func__, in->usecase);
+#endif
 
     in->pcm_device_id = platform_get_pcm_device_id(in->usecase, PCM_CAPTURE);
     if (in->pcm_device_id < 0) {
@@ -1841,7 +1847,12 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
             if ((adev->mode == AUDIO_MODE_IN_CALL) &&
                     output_drives_call(adev, out)) {
                 adev->current_call_output = out;
+#ifdef PLATFORM_MSM8960
+                if (!((adev->mode == AUDIO_MODE_IN_CALL) &&
+                            adev->voice.in_call))
+# else
                 if (!adev->voice.in_call)
+# endif
                     ret = voice_start_call(adev);
                 else
                     voice_update_devices_for_all_voice_usecases(adev);
@@ -2437,7 +2448,9 @@ static char* in_get_parameters(const struct audio_stream *stream,
 
     ALOGV("%s: enter: keys - %s", __func__, keys);
 
+#ifdef MULTI_VOICE_SESSION_ENABLED
     voice_extn_in_get_parameters(in, query, reply);
+#endif
 
     str = str_parms_to_str(reply);
     str_parms_destroy(query);
@@ -2473,9 +2486,11 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer,
 
     if (in->standby) {
         pthread_mutex_lock(&adev->lock);
+#ifdef MULTI_VOICE_SESSION_ENABLED
         if (in->usecase == USECASE_COMPRESS_VOIP_CALL)
             ret = voice_extn_compress_voip_start_input_stream(in);
         else
+#endif
             ret = start_input_stream(in);
         pthread_mutex_unlock(&adev->lock);
         if (ret != 0) {
@@ -2683,8 +2698,11 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
             ret = -EINVAL;
             goto error_open;
         }
-        if (!is_supported_format(config->offload_info.format) &&
-                !audio_extn_is_dolby_format(config->offload_info.format)) {
+        if (!is_supported_format(config->offload_info.format) 
+#ifdef DS1_DOLBY_DAP_ENABLED            
+                && !audio_extn_is_dolby_format(config->offload_info.format)
+#endif
+           ) {
             ALOGE("%s: Unsupported offload audio format %x", __func__, config->offload_info.format);
             ret = -EINVAL;
             goto error_open;
@@ -2715,14 +2733,16 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         out->stream.flush = out_flush;
         out->bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
 
+#ifdef DS1_DOLBY_DAP_ENABLED
         if (audio_extn_is_dolby_format(config->offload_info.format))
             out->compr_config.codec->id =
                 audio_extn_dolby_get_snd_codec_id(adev, out,
                                                   config->offload_info.format);
         else
+#endif
             out->compr_config.codec->id =
                 get_snd_codec_id(config->offload_info.format);
-
+#ifndef PLATFORM_MSM8960
         if (audio_is_offload_pcm(config->offload_info.format)) {
             out->compr_config.fragment_size =
                        platform_get_pcm_offload_buffer_size(&config->offload_info);
@@ -2730,6 +2750,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
             out->compr_config.fragment_size =
                        platform_get_compress_offload_buffer_size(&config->offload_info);
         }
+#else
+        out->compr_config.fragment_size = 0;
+#endif
         out->compr_config.fragments = COMPRESS_OFFLOAD_NUM_FRAGMENTS;
         out->compr_config.codec->sample_rate =
                     compress_get_alsa_rate(config->offload_info.sample_rate);
@@ -2927,7 +2950,7 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
     int ret = 0;
 
     ALOGD("%s: enter:stream_handle(%p)",__func__, out);
-
+#ifdef COMPRESS_VOIP_ENABLED
     if (out->usecase == USECASE_COMPRESS_VOIP_CALL) {
         pthread_mutex_lock(&adev->lock);
         ret = voice_extn_compress_voip_close_output_stream(&stream->common);
@@ -2937,6 +2960,7 @@ static void adev_close_output_stream(struct audio_hw_device *dev __unused,
                   __func__, ret);
     }
     else
+#endif
         out_standby(&stream->common);
 
     if (is_offload_usecase(out->usecase)) {
@@ -3342,6 +3366,7 @@ static void adev_close_input_stream(struct audio_hw_device *dev __unused,
 
     ALOGD("%s: enter:stream_handle(%p)",__func__, in);
 
+#ifdef COMPRESS_VOIP_ENABLED
     if (in->usecase == USECASE_COMPRESS_VOIP_CALL) {
         pthread_mutex_lock(&adev->lock);
         ret = voice_extn_compress_voip_close_input_stream(&stream->common);
@@ -3350,6 +3375,7 @@ static void adev_close_input_stream(struct audio_hw_device *dev __unused,
             ALOGE("%s: Compress voip input cannot be closed, error:%d",
                   __func__, ret);
     } else
+#endif
         in_standby(&stream->common);
 
     if (audio_extn_ssr_get_enabled() &&
